@@ -1,6 +1,6 @@
 // Helper service to seed realistic demo data and reset clinic state for demonstration.
 
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 import { patientRepository } from '../repositories/patientRepository.js';
 import { metaRepository } from '../repositories/metaRepository.js';
 import { queueService } from './queueService.js';
@@ -8,7 +8,7 @@ import { formatLocalDate } from '../logic/queueLogic.js';
 import { DEFAULT_CONSULTATION_MINUTES } from '../config.js';
 
 export const demoService = {
-  seedDemoPatients() {
+  async seedDemoPatients() {
     const samples = [
       { name: 'Asha Sharma', age: 34, priority: 'normal' },
       { name: 'David Chen', age: 58, priority: 'normal' },
@@ -19,7 +19,7 @@ export const demoService = {
 
     const seededPatients = [];
     for (const sample of samples) {
-      const patient = queueService.issueToken(sample);
+      const patient = await queueService.issueToken(sample);
       seededPatients.push(patient);
     }
 
@@ -30,19 +30,27 @@ export const demoService = {
     };
   },
 
-  resetAllData() {
-    const resetTransaction = db.transaction(() => {
-      patientRepository.clearAll();
+  async resetAllData() {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      await patientRepository.clearAll(conn);
       const todayStr = formatLocalDate(new Date());
-      metaRepository.set('last_token', 0);
-      metaRepository.set('business_date', todayStr);
-      metaRepository.set('consultation_minutes', String(DEFAULT_CONSULTATION_MINUTES));
-    });
+      await metaRepository.set('last_token', 0, conn);
+      await metaRepository.set('business_date', todayStr, conn);
+      await metaRepository.set('consultation_minutes', String(DEFAULT_CONSULTATION_MINUTES), conn);
 
-    resetTransaction();
+      await conn.commit();
 
-    return {
-      message: 'All queue data and tokens have been reset.'
-    };
+      return {
+        message: 'All queue data and tokens have been reset.'
+      };
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   }
 };

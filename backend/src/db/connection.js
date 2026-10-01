@@ -1,19 +1,20 @@
-// Opens and configures the SQLite database instance using better-sqlite3.
+// Opens and configures the MySQL connection pool using mysql2/promise.
 
-import Database from 'better-sqlite3';
-import path from 'node:path';
-import { DB_FILE } from '../config.js';
-import { initSchema } from './schema.js';
+import mysql from 'mysql2/promise';
+import { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME } from '../config.js';
 
-// Resolve database file to the root of the project workspace.
-const dbPath = path.resolve(process.cwd(), DB_FILE);
-const db = new Database(dbPath);
+// Create connection pool targeting the appointment database
+const pool = mysql.createPool({
+  host: DB_HOST,
+  port: DB_PORT,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  database: DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
+});
 
-// Enable WAL mode for better concurrency and foreign keys for referential integrity.
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-// Initialize schema immediately so all prepared statements in repositories succeed on import.
-initSchema(db);
-
-export default db;
+export default pool;

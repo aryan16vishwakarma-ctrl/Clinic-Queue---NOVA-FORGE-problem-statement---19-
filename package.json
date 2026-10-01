@@ -1,27 +1,17 @@
 {
   "name": "carequeue",
   "version": "1.0.0",
-  "description": "Clinic queue management system built with React and Framer Motion",
+  "description": "Clinic queue and appointment management system with MySQL",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js",
     "server": "node backend/server.js",
     "test": "node --test backend/tests"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
     "dotenv": "^18.0.5",
     "express": "^4.21.2",
-    "framer-motion": "^12.4.7",
-    "lucide-react": "^1.49.0",
-    "mysql2": "^3.24.5",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.2.0"
+    "mysql2": "^3.24.5"
   }
 }

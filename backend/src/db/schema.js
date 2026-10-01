@@ -1,38 +1,63 @@
-// Initializes SQLite tables and seeds initial metadata values for CareQueue.
+// Initializes MySQL tables and seeds initial metadata values for CareQueue.
 
+import pool from './connection.js';
 import { formatLocalDate } from '../logic/queueLogic.js';
 import { DEFAULT_CONSULTATION_MINUTES } from '../config.js';
 
-export function initSchema(db) {
-  db.exec(`
+export async function initSchema() {
+  // Patients table for queue tracking
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS patients (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      token INTEGER NOT NULL CHECK (token >= 1 AND token <= 50),
-      name TEXT NOT NULL,
-      age INTEGER NOT NULL CHECK (age >= 0 AND age <= 120),
-      priority TEXT NOT NULL CHECK (priority IN ('normal', 'emergency')),
-      status TEXT NOT NULL CHECK (status IN ('waiting', 'serving', 'done', 'cancelled')),
-      arrived_at TEXT NOT NULL,
-      called_at TEXT,
-      finished_at TEXT
-    );
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      token INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      age INT NOT NULL,
+      priority ENUM('normal', 'emergency') NOT NULL DEFAULT 'normal',
+      status ENUM('waiting', 'serving', 'done', 'cancelled') NOT NULL DEFAULT 'waiting',
+      arrived_at VARCHAR(100) NOT NULL,
+      called_at VARCHAR(100) NULL,
+      finished_at VARCHAR(100) NULL,
+      INDEX idx_patients_status (status),
+      INDEX idx_patients_arrived (arrived_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 
-    CREATE INDEX IF NOT EXISTS idx_patients_status ON patients (status);
-    CREATE INDEX IF NOT EXISTS idx_patients_arrived ON patients (arrived_at);
-
+  // Meta table for clinic operational key-value state
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
+      \`key\` VARCHAR(191) PRIMARY KEY,
+      \`value\` TEXT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // Appointments table for scheduled consultations
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      patient_name VARCHAR(255) NOT NULL,
+      age INT NOT NULL,
+      contact VARCHAR(50) NULL,
+      doctor_name VARCHAR(255) NULL,
+      appointment_date VARCHAR(50) NOT NULL,
+      appointment_time VARCHAR(50) NOT NULL,
+      status ENUM('scheduled', 'completed', 'cancelled') NOT NULL DEFAULT 'scheduled',
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
   const todayStr = formatLocalDate(new Date());
 
-  const insertMetaDefault = db.prepare(`
-    INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)
-  `);
-
-  insertMetaDefault.run('last_token', '0');
-  insertMetaDefault.run('business_date', todayStr);
-  insertMetaDefault.run('consultation_minutes', String(DEFAULT_CONSULTATION_MINUTES));
+  await pool.execute(
+    'INSERT IGNORE INTO meta (`key`, `value`) VALUES (?, ?)',
+    ['last_token', '0']
+  );
+  await pool.execute(
+    'INSERT IGNORE INTO meta (`key`, `value`) VALUES (?, ?)',
+    ['business_date', todayStr]
+  );
+  await pool.execute(
+    'INSERT IGNORE INTO meta (`key`, `value`) VALUES (?, ?)',
+    ['consultation_minutes', String(DEFAULT_CONSULTATION_MINUTES)]
+  );
 }

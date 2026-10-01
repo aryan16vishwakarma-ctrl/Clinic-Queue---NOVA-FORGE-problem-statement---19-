@@ -1,28 +1,27 @@
-// Data access layer for clinic operational metadata.
+// Data access layer for clinic operational metadata stored in MySQL.
 
-import db from '../db/connection.js';
-
-const getMetaStmt = db.prepare('SELECT value FROM meta WHERE key = ?');
-const setMetaStmt = db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-const getAllMetaStmt = db.prepare('SELECT key, value FROM meta');
+import pool from '../db/connection.js';
 
 export const metaRepository = {
-  get(key) {
-    const row = getMetaStmt.get(key);
-    return row ? row.value : null;
+  async get(key, conn = pool) {
+    const [rows] = await conn.execute('SELECT `value` FROM meta WHERE `key` = ?', [key]);
+    return rows.length > 0 ? rows[0].value : null;
   },
 
-  getNumber(key, defaultValue = 0) {
-    const row = getMetaStmt.get(key);
-    return row ? Number(row.value) : defaultValue;
+  async getNumber(key, defaultValue = 0, conn = pool) {
+    const [rows] = await conn.execute('SELECT `value` FROM meta WHERE `key` = ?', [key]);
+    return rows.length > 0 ? Number(rows[0].value) : defaultValue;
   },
 
-  set(key, value) {
-    setMetaStmt.run(key, String(value));
+  async set(key, value, conn = pool) {
+    await conn.execute(
+      'INSERT INTO meta (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+      [key, String(value)]
+    );
   },
 
-  getAll() {
-    const rows = getAllMetaStmt.all();
+  async getAll(conn = pool) {
+    const [rows] = await conn.query('SELECT `key`, `value` FROM meta');
     const map = {};
     for (const row of rows) {
       map[row.key] = row.value;

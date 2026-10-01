@@ -5,18 +5,18 @@ import { queueService } from '../services/queueService.js';
 
 const router = Router();
 
-router.get('/queue', (req, res, next) => {
+router.get('/queue', async (req, res, next) => {
   try {
-    const queueView = queueService.getQueueView();
+    const queueView = await queueService.getQueueView();
     return res.json(queueView);
   } catch (err) {
     next(err);
   }
 });
 
-router.post('/next', (req, res, next) => {
+router.post('/next', async (req, res, next) => {
   try {
-    const result = queueService.callNext();
+    const result = await queueService.callNext();
     return res.json(result);
   } catch (err) {
     next(err);

@@ -1,110 +1,99 @@
-// Data access layer for patient records and queue states.
+// Data access layer for patient records and queue states stored in MySQL.
 
-import db from '../db/connection.js';
-
-const findActiveTokensStmt = db.prepare(`
-  SELECT token FROM patients WHERE status IN ('waiting', 'serving')
-`);
-
-const findWaitingPatientsStmt = db.prepare(`
-  SELECT * FROM patients WHERE status = 'waiting' ORDER BY arrived_at ASC
-`);
-
-const findServingPatientStmt = db.prepare(`
-  SELECT * FROM patients WHERE status = 'serving' LIMIT 1
-`);
-
-const findPatientByIdStmt = db.prepare(`
-  SELECT * FROM patients WHERE id = ?
-`);
-
-const insertPatientStmt = db.prepare(`
-  INSERT INTO patients (token, name, age, priority, status, arrived_at)
-  VALUES (@token, @name, @age, @priority, @status, @arrived_at)
-`);
-
-const markDoneStmt = db.prepare(`
-  UPDATE patients SET status = 'done', finished_at = ? WHERE id = ?
-`);
-
-const markServingStmt = db.prepare(`
-  UPDATE patients SET status = 'serving', called_at = ? WHERE id = ?
-`);
-
-const cancelPatientStmt = db.prepare(`
-  UPDATE patients SET status = 'cancelled' WHERE id = ?
-`);
-
-const cancelActivePatientsStmt = db.prepare(`
-  UPDATE patients SET status = 'cancelled' WHERE status IN ('waiting', 'serving')
-`);
-
-const countWaitingStmt = db.prepare(`
-  SELECT COUNT(*) as count FROM patients WHERE status = 'waiting'
-`);
-
-const countServedTodayStmt = db.prepare(`
-  SELECT COUNT(*) as count FROM patients WHERE status = 'done' AND substr(arrived_at, 1, 10) = ?
-`);
-
-const countCancelledTodayStmt = db.prepare(`
-  SELECT COUNT(*) as count FROM patients WHERE status = 'cancelled' AND substr(arrived_at, 1, 10) = ?
-`);
-
-const countEmergenciesTodayStmt = db.prepare(`
-  SELECT COUNT(*) as count FROM patients WHERE priority = 'emergency' AND substr(arrived_at, 1, 10) = ?
-`);
-
-const clearAllPatientsStmt = db.prepare('DELETE FROM patients');
+import pool from '../db/connection.js';
 
 export const patientRepository = {
-  findActiveTokens() {
-    return findActiveTokensStmt.all().map((row) => row.token);
+  async findActiveTokens(conn = pool) {
+    const [rows] = await conn.execute(
+      "SELECT token FROM patients WHERE status IN ('waiting', 'serving')"
+    );
+    return rows.map((row) => row.token);
   },
 
-  findWaitingPatients() {
-    return findWaitingPatientsStmt.all();
+  async findWaitingPatients(conn = pool) {
+    const [rows] = await conn.execute(
+      "SELECT * FROM patients WHERE status = 'waiting' ORDER BY arrived_at ASC"
+    );
+    return rows;
   },
 
-  findServingPatient() {
-    return findServingPatientStmt.get() || null;
+  async findServingPatient(conn = pool) {
+    const [rows] = await conn.execute(
+      "SELECT * FROM patients WHERE status = 'serving' LIMIT 1"
+    );
+    return rows.length > 0 ? rows[0] : null;
   },
 
-  findById(id) {
-    return findPatientByIdStmt.get(id) || null;
+  async findById(id, conn = pool) {
+    const [rows] = await conn.execute(
+      'SELECT * FROM patients WHERE id = ?',
+      [id]
+    );
+    return rows.length > 0 ? rows[0] : null;
   },
 
-  insert(patientData) {
-    const result = insertPatientStmt.run(patientData);
-    return result.lastInsertRowid;
+  async insert(patientData, conn = pool) {
+    const { token, name, age, priority, status, arrived_at } = patientData;
+    const [result] = await conn.execute(
+      'INSERT INTO patients (token, name, age, priority, status, arrived_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [token, name, age, priority, status, arrived_at]
+    );
+    return result.insertId;
   },
 
-  markDone(id, finishedAt) {
-    markDoneStmt.run(finishedAt, id);
+  async markDone(id, finishedAt, conn = pool) {
+    await conn.execute(
+      "UPDATE patients SET status = 'done', finished_at = ? WHERE id = ?",
+      [finishedAt, id]
+    );
   },
 
-  markServing(id, calledAt) {
-    markServingStmt.run(calledAt, id);
+  async markServing(id, calledAt, conn = pool) {
+    await conn.execute(
+      "UPDATE patients SET status = 'serving', called_at = ? WHERE id = ?",
+      [calledAt, id]
+    );
   },
 
-  cancel(id) {
-    cancelPatientStmt.run(id);
+  async cancel(id, conn = pool) {
+    await conn.execute(
+      "UPDATE patients SET status = 'cancelled' WHERE id = ?",
+      [id]
+    );
   },
 
-  cancelAllActive() {
-    cancelActivePatientsStmt.run();
+  async cancelAllActive(conn = pool) {
+    await conn.execute(
+      "UPDATE patients SET status = 'cancelled' WHERE status IN ('waiting', 'serving')"
+    );
   },
 
-  getStats(businessDate) {
+  async getStats(businessDate, conn = pool) {
+    const [[waitingRow]] = await conn.execute(
+      "SELECT COUNT(*) as count FROM patients WHERE status = 'waiting'"
+    );
+    const [[servedRow]] = await conn.execute(
+      "SELECT COUNT(*) as count FROM patients WHERE status = 'done' AND SUBSTRING(arrived_at, 1, 10) = ?",
+      [businessDate]
+    );
+    const [[cancelledRow]] = await conn.execute(
+      "SELECT COUNT(*) as count FROM patients WHERE status = 'cancelled' AND SUBSTRING(arrived_at, 1, 10) = ?",
+      [businessDate]
+    );
+    const [[emergencyRow]] = await conn.execute(
+      "SELECT COUNT(*) as count FROM patients WHERE priority = 'emergency' AND SUBSTRING(arrived_at, 1, 10) = ?",
+      [businessDate]
+    );
+
     return {
-      waitingCount: countWaitingStmt.get().count,
-      servedToday: countServedTodayStmt.get(businessDate).count,
-      cancelledToday: countCancelledTodayStmt.get(businessDate).count,
-      emergenciesToday: countEmergenciesTodayStmt.get(businessDate).count
+      waitingCount: Number(waitingRow.count || 0),
+      servedToday: Number(servedRow.count || 0),
+      cancelledToday: Number(cancelledRow.count || 0),
+      emergenciesToday: Number(emergencyRow.count || 0)
     };
   },
 
-  clearAll() {
-    clearAllPatientsStmt.run();
+  async clearAll(conn = pool) {
+    await conn.execute('DELETE FROM patients');
   }
 };

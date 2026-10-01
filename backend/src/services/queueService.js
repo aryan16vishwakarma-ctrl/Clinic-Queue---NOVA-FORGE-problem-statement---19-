@@ -1,6 +1,6 @@
 // Orchestrates queue operations, transactions, and view transformations.
 
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 import { patientRepository } from '../repositories/patientRepository.js';
 import { metaRepository } from '../repositories/metaRepository.js';
 import {
@@ -12,12 +12,15 @@ import {
 import { TOTAL_TOKENS, DEFAULT_CONSULTATION_MINUTES, PATIENT_STATUS } from '../config.js';
 
 export const queueService = {
-  issueToken({ name, age, priority }) {
+  async issueToken({ name, age, priority }) {
     // Atomicity is essential here: token selection and insertion must occur inside the same
     // transaction to guarantee no two concurrent requests receive the same active token.
-    const issueTransaction = db.transaction(() => {
-      const lastToken = metaRepository.getNumber('last_token', 0);
-      const activeTokens = patientRepository.findActiveTokens();
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const lastToken = await metaRepository.getNumber('last_token', 0, conn);
+      const activeTokens = await patientRepository.findActiveTokens(conn);
 
       const assignment = assignNextToken(lastToken, activeTokens, TOTAL_TOKENS);
       if (assignment.error) {
@@ -29,61 +32,75 @@ export const queueService = {
       const assignedToken = assignment.token;
       const arrivedAt = new Date().toISOString();
 
-      const patientId = patientRepository.insert({
+      const patientId = await patientRepository.insert({
         token: assignedToken,
         name,
         age,
         priority,
         status: PATIENT_STATUS.WAITING,
         arrived_at: arrivedAt
-      });
+      }, conn);
 
-      metaRepository.set('last_token', assignedToken);
+      await metaRepository.set('last_token', assignedToken, conn);
+
+      await conn.commit();
 
       return {
         id: patientId,
         token: assignedToken,
         name
       };
-    });
-
-    return issueTransaction();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   },
 
-  callNext() {
+  async callNext() {
     // Transitioning from the current patient to the next must be atomic so consultation state remains consistent.
-    const callNextTransaction = db.transaction(() => {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
       const nowIso = new Date().toISOString();
-      const currentServing = patientRepository.findServingPatient();
+      const currentServing = await patientRepository.findServingPatient(conn);
 
       if (currentServing) {
-        patientRepository.markDone(currentServing.id, nowIso);
+        await patientRepository.markDone(currentServing.id, nowIso, conn);
       }
 
-      const rawWaiting = patientRepository.findWaitingPatients();
+      const rawWaiting = await patientRepository.findWaitingPatients(conn);
       const sortedWaiting = sortWaitingPatients(rawWaiting);
       const nextToServe = pickNextPatient(sortedWaiting);
 
       if (!nextToServe) {
+        await conn.commit();
         return {
           serving: null,
           message: 'No patient waiting'
         };
       }
 
-      patientRepository.markServing(nextToServe.id, nowIso);
-      const newlyServing = patientRepository.findById(nextToServe.id);
+      await patientRepository.markServing(nextToServe.id, nowIso, conn);
+      const newlyServing = await patientRepository.findById(nextToServe.id, conn);
+
+      await conn.commit();
 
       return {
         serving: newlyServing
       };
-    });
-
-    return callNextTransaction();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   },
 
-  cancelPatient(id) {
-    const patient = patientRepository.findById(id);
+  async cancelPatient(id) {
+    const patient = await patientRepository.findById(id);
     if (!patient) {
       const error = new Error('Patient not found.');
       error.statusCode = 404;
@@ -97,27 +114,27 @@ export const queueService = {
       throw error;
     }
 
-    patientRepository.cancel(id);
+    await patientRepository.cancel(id);
     return {
       success: true,
       message: 'Patient cancelled successfully.'
     };
   },
 
-  getQueueView() {
-    const serving = patientRepository.findServingPatient();
-    const rawWaiting = patientRepository.findWaitingPatients();
-    const consultationMinutes = metaRepository.getNumber('consultation_minutes', DEFAULT_CONSULTATION_MINUTES);
-    const businessDate = metaRepository.get('business_date');
+  async getQueueView() {
+    const serving = await patientRepository.findServingPatient();
+    const rawWaiting = await patientRepository.findWaitingPatients();
+    const consultationMinutes = await metaRepository.getNumber('consultation_minutes', DEFAULT_CONSULTATION_MINUTES);
+    const businessDate = await metaRepository.get('business_date');
 
     const sortedWaiting = sortWaitingPatients(rawWaiting);
     const waitingWithEstimates = addWaitEstimates(sortedWaiting, consultationMinutes);
 
-    const lastToken = metaRepository.getNumber('last_token', 0);
-    const activeTokens = patientRepository.findActiveTokens();
+    const lastToken = await metaRepository.getNumber('last_token', 0);
+    const activeTokens = await patientRepository.findActiveTokens();
     const nextTokenPreview = assignNextToken(lastToken, activeTokens, TOTAL_TOKENS);
 
-    const stats = patientRepository.getStats(businessDate);
+    const stats = await patientRepository.getStats(businessDate);
 
     return {
       serving,
